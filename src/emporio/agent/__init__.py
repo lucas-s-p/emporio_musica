@@ -14,13 +14,13 @@ def build_agent(
     store: Store,
     clock: Clock,
     policies: PolicyIndex,
-    prompts_root: Path,
+    prompts_dir: Path,
 ) -> Agent:
     """A fresh conversation: own tool registry (so own verified identity) and own history."""
     return Agent(
         llm,
         build_registry(store, clock, policies=policies),
-        build_system_prompt(clock, prompts_root),
+        build_system_prompt(clock, prompts_dir),
     )
 
 

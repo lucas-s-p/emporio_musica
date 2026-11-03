@@ -15,6 +15,7 @@ from emporio.services.clock import build_clock
 from emporio.tools import build_registry
 
 ROOT = Path(__file__).resolve().parents[1]
+PROMPTS = ROOT / "prompts"
 CLOCK = build_clock(date(2026, 11, 2))  # a Monday
 
 
@@ -27,20 +28,20 @@ def make_agent(llm: LLMClient, store: Store, policies: PolicyIndex, **kwargs: in
     return Agent(
         llm,
         build_registry(store, CLOCK, policies=policies),
-        build_system_prompt(CLOCK, ROOT),
+        build_system_prompt(CLOCK, PROMPTS),
         **kwargs,
     )
 
 
 def test_system_prompt_injects_today_and_has_no_placeholders() -> None:
-    prompt = build_system_prompt(CLOCK, ROOT)
+    prompt = build_system_prompt(CLOCK, PROMPTS)
     assert "02/11/2026" in prompt and "segunda-feira" in prompt
     assert "{today}" not in prompt and "{weekday}" not in prompt
 
 
 def test_persona_only_mentions_tools_that_exist(store: Store, policies: PolicyIndex) -> None:
     names = set(build_registry(store, CLOCK, policies=policies).names)
-    mentioned = set(re.findall(r"`([a-z_]+)`", build_system_prompt(CLOCK, ROOT)))
+    mentioned = set(re.findall(r"`([a-z_]+)`", build_system_prompt(CLOCK, PROMPTS)))
     tool_like = {
         m for m in mentioned if m.startswith(("get_", "search_", "verify_", "check_", "estimate_"))
     }
@@ -48,7 +49,7 @@ def test_persona_only_mentions_tools_that_exist(store: Store, policies: PolicyIn
 
 
 def test_persona_has_the_required_guardrails() -> None:
-    prompt = build_system_prompt(CLOCK, ROOT).lower()
+    prompt = build_system_prompt(CLOCK, PROMPTS).lower()
     for needle in ("acessórios", "fora disso", "nunca invente", "verificad", "não use travessão"):
         assert needle in prompt
 
@@ -122,8 +123,8 @@ def test_empty_model_answer_is_not_sent_to_the_customer(
 
 
 def test_each_conversation_has_its_own_identity(store: Store, policies: PolicyIndex) -> None:
-    a = build_agent(ScriptedLLM(), store, CLOCK, policies, ROOT)
-    b = build_agent(ScriptedLLM(), store, CLOCK, policies, ROOT)
+    a = build_agent(ScriptedLLM(), store, CLOCK, policies, PROMPTS)
+    b = build_agent(ScriptedLLM(), store, CLOCK, policies, PROMPTS)
     assert a._registry is not b._registry
 
 
@@ -140,3 +141,13 @@ def test_history_is_bounded_but_identity_survives(store: Store, policies: Policy
     users = [m["content"] for m in agent.messages if m["role"] == "user"]
     assert users == ["u2", "u3", "u4"]  # 2 previous turns + the latest
     assert agent.messages[0]["role"] == "system"
+
+
+def test_default_settings_find_the_persona_from_any_folder(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from emporio.config import Settings
+
+    monkeypatch.chdir(tmp_path)
+    settings = Settings(_env_file=None)
+    assert "Empório da Música" in build_system_prompt(CLOCK, settings.prompts_dir)

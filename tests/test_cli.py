@@ -5,6 +5,7 @@ import pytest
 from fakes import ScriptedLLM, say
 
 from emporio.agent import Agent
+from emporio.config import Settings
 from emporio.interfaces.cli import main, run_chat
 from emporio.llm.base import LLMResponse, ToolCall
 from emporio.memory import Transcript
@@ -67,7 +68,9 @@ def test_transcript_saved_after_each_turn(tmp_path: Path) -> None:
 def test_main_without_api_key_explains_and_returns_2(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
-    monkeypatch.chdir(tmp_path)  # no .env here
+    monkeypatch.chdir(tmp_path)
+    # Ignore any real .env of the developer running the tests.
+    monkeypatch.setattr("emporio.interfaces.cli.Settings", lambda: Settings(_env_file=None))
     for var in ("OPENROUTER_API_KEY", "OPENROUTER_MODEL"):
         monkeypatch.delenv(var, raising=False)
     assert main([]) == 2
