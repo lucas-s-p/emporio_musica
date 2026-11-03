@@ -18,3 +18,9 @@ class Settings(BaseSettings):
     @property
     def fallback_models(self) -> list[str]:
         return [m.strip() for m in self.openrouter_fallback_models.split(",") if m.strip()]
+
+    @property
+    def model_chain(self) -> list[str]:
+        """Primary model first, then fallbacks, without duplicates."""
+        primary = [self.openrouter_model.strip()] if self.openrouter_model else []
+        return list(dict.fromkeys([*primary, *self.fallback_models]))
