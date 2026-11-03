@@ -309,3 +309,27 @@ def test_conversations_do_not_share_identity(store: Store) -> None:
     second = make(store)
     assert first.execute("get_order_status", {"order_id": 4})["order_id"] == 4
     assert second.execute("get_order_status", {"order_id": 4})["error"] == "NOT_VERIFIED"
+
+
+def test_search_description_does_not_suggest_every_price_is_promotional() -> None:
+    """Models copied 'promotion applied' from this text into answers about regular prices."""
+    from emporio.tools.products import product_tools
+
+    ctx = None  # specs are static, the handlers are not called
+    description = next(t.description for t in product_tools(ctx) if t.name == "search_products")  # type: ignore[arg-type]
+    assert "promotion applied" not in description
+    assert "`promotion` field" in description
+
+
+def test_truncated_search_tells_the_model_the_real_count(store: Store) -> None:
+    from datetime import date
+
+    from emporio.services.clock import build_clock
+    from emporio.tools import build_registry
+
+    registry = build_registry(store, build_clock(date(2026, 11, 2)))
+    full = registry.execute("search_products", {"category": "violões", "limit": 50})
+    cut = registry.execute("search_products", {"category": "violões", "limit": 3})
+    assert "note" not in full
+    assert cut["returned"] == 3 and cut["total_matches"] > 3
+    assert str(cut["total_matches"]) in cut["note"]
