@@ -6,6 +6,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 from emporio.llm.base import LLMClient, LLMError, Message, tool_message
+from emporio.memory.history import trim_turns
 from emporio.services.store import STORE_INFO
 from emporio.tools.base import ToolRegistry
 
@@ -54,14 +55,18 @@ class Agent:
         *,
         max_tool_rounds: int = 6,
         temperature: float = 0.2,
+        max_history_turns: int = 20,
     ) -> None:
         self._llm = llm
         self._registry = registry
         self._max_rounds = max_tool_rounds
         self._temperature = temperature
+        self._max_history_turns = max_history_turns
         self.messages: list[Message] = [{"role": "system", "content": system_prompt}]
 
     def respond(self, user_text: str) -> AgentReply:
+        # Before the checkpoint, so a rollback never points into trimmed history.
+        trim_turns(self.messages, self._max_history_turns)
         checkpoint = len(self.messages)
         self.messages.append({"role": "user", "content": user_text})
         traces: list[ToolTrace] = []

@@ -1,60 +1,21 @@
 import json
 import re
-from collections.abc import Sequence
 from datetime import date
 from pathlib import Path
 
 import pytest
+from fakes import ScriptedLLM, call, say
 
 from emporio.agent import Agent, build_agent, build_system_prompt
 from emporio.agent.agent import GIVE_UP_MESSAGE, OUTAGE_MESSAGE
 from emporio.data import Store
 from emporio.knowledge import PolicyIndex, load_policy_index
-from emporio.llm.base import (
-    JsonDict,
-    LLMClient,
-    LLMError,
-    LLMResponse,
-    LLMUnavailableError,
-    Message,
-    ToolCall,
-)
+from emporio.llm.base import LLMClient, LLMUnavailableError
 from emporio.services.clock import build_clock
 from emporio.tools import build_registry
 
 ROOT = Path(__file__).resolve().parents[1]
 CLOCK = build_clock(date(2026, 11, 2))  # a Monday
-
-
-class ScriptedLLM(LLMClient):
-    """Returns canned responses in order and records what the agent sent."""
-
-    def __init__(self, *steps: LLMResponse | LLMError) -> None:
-        self._steps = list(steps)
-        self.seen: list[list[Message]] = []
-
-    def complete(
-        self,
-        messages: Sequence[Message],
-        tools: Sequence[JsonDict] | None = None,
-        *,
-        temperature: float = 0.2,
-        max_tokens: int | None = None,
-    ) -> LLMResponse:
-        self.seen.append([dict(m) for m in messages])
-        step = self._steps.pop(0)
-        if isinstance(step, LLMError):
-            raise step
-        return step
-
-
-def say(text: str, model: str = "fake") -> LLMResponse:
-    return LLMResponse(content=text, model=model)
-
-
-def call(name: str, arguments: JsonDict | str = "{}", call_id: str = "c1") -> LLMResponse:
-    args = arguments if isinstance(arguments, str) else json.dumps(arguments)
-    return LLMResponse(tool_calls=[ToolCall(id=call_id, name=name, arguments=args)], model="fake")
 
 
 @pytest.fixture(scope="module")
@@ -164,3 +125,18 @@ def test_each_conversation_has_its_own_identity(store: Store, policies: PolicyIn
     a = build_agent(ScriptedLLM(), store, CLOCK, policies, ROOT)
     b = build_agent(ScriptedLLM(), store, CLOCK, policies, ROOT)
     assert a._registry is not b._registry
+
+
+def test_history_is_bounded_but_identity_survives(store: Store, policies: PolicyIndex) -> None:
+    llm = ScriptedLLM(*[say(f"r{i}") for i in range(5)])
+    agent = Agent(
+        llm,
+        build_registry(store, CLOCK, policies=policies),
+        "sys",
+        max_history_turns=2,
+    )
+    for i in range(5):
+        agent.respond(f"u{i}")
+    users = [m["content"] for m in agent.messages if m["role"] == "user"]
+    assert users == ["u2", "u3", "u4"]  # 2 previous turns + the latest
+    assert agent.messages[0]["role"] == "system"

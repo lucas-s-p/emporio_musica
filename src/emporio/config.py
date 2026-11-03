@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     openrouter_fallback_models: str = ""
     store_today: date | None = None
     data_dir: Path = Path("data")
+    prompts_dir: Path = Path("prompts")
 
     @property
     def fallback_models(self) -> list[str]:

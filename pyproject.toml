@@ -13,6 +13,9 @@ dependencies = [
     "tzdata>=2024.1"
 ]
 
+[project.scripts]
+emporio = "emporio.interfaces.cli:main"
+
 [project.optional-dependencies]
 dev = ["pytest>=8", "ruff>=0.5", "mypy>=1.10"]
 
