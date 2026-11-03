@@ -174,3 +174,39 @@ def test_model_chain_from_settings_dedupes() -> None:
     )
     assert settings.model_chain == ["a", "b", "c"]
     assert build_llm(settings).models == ["a", "b", "c"]  # type: ignore[attr-defined]
+
+
+def test_dead_model_is_skipped_on_later_calls() -> None:
+    client, sdk, _ = make({"a": [status_error(404)], "b": [completion(), completion()]})
+    client.complete(MSGS)
+    client.complete(MSGS)
+    assert [c["model"] for c in sdk.calls] == ["a", "b", "b"]  # "a" was tried only once
+
+
+def test_rate_limited_model_rests_then_comes_back() -> None:
+    clock = [0.0]
+    sdk = FakeSDK({"a": [status_error(429)] * 3 + [completion(model="a")], "b": [completion()] * 2})
+    client = OpenRouterClient(
+        "key",
+        ["a", "b"],
+        client=sdk,
+        sleep=lambda _: None,
+        jitter=lambda: 0.0,
+        monotonic=lambda: clock[0],
+        cooldown=60.0,
+    )
+    assert client.complete(MSGS).model == "m"  # a exhausted its retries, b answered
+    client.complete(MSGS)  # still resting: straight to b
+    assert [c["model"] for c in sdk.calls] == ["a", "a", "a", "b", "b"]
+    clock[0] = 61.0
+    assert client.complete(MSGS).model == "a"  # cooldown over, primary is preferred again
+
+
+def test_if_every_model_is_penalized_they_are_all_tried_again() -> None:
+    client, sdk, _ = make(
+        {"a": [status_error(404), completion()], "b": [status_error(404), completion(model="b")]}
+    )
+    with pytest.raises(LLMUnavailableError):
+        client.complete(MSGS)
+    assert client.complete(MSGS).model in ("m", "b")  # no deadlock, a second chance
+    assert len(sdk.calls) == 3

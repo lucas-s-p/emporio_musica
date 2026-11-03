@@ -23,6 +23,7 @@ class TranscriptTurn:
 @dataclass
 class Transcript:
     title: str = "Conversa com o agente"
+    subtitle: str = ""  # one italic line under the title (date, model, how it was generated)
     turns: list[TranscriptTurn] = field(default_factory=list)
     _conversation: int = 1
 
@@ -35,6 +36,8 @@ class Transcript:
 
     def to_markdown(self, *, include_tools: bool = True) -> str:
         lines = [f"# {self.title}", ""]
+        if self.subtitle:
+            lines += [f"_{self.subtitle}_", ""]
         current = 0
         for turn in self.turns:
             if turn.conversation != current:

@@ -69,6 +69,8 @@ class OpenRouterClient(LLMClient):
         client: Any | None = None,
         sleep: Callable[[float], None] = time.sleep,
         jitter: Callable[[], float] = random.random,
+        monotonic: Callable[[], float] = time.monotonic,
+        cooldown: float = 60.0,
     ) -> None:
         if not api_key and client is None:
             raise LLMConfigError("OPENROUTER_API_KEY is not set (see .env.example)")
@@ -81,6 +83,10 @@ class OpenRouterClient(LLMClient):
         self._max_delay = max_delay
         self._sleep = sleep
         self._jitter = jitter
+        self._monotonic = monotonic
+        self._cooldown = cooldown
+        self._dead: set[str] = set()  # 400/404/422: the model cannot serve this request at all
+        self._resting: dict[str, float] = {}  # rate limited or down: skip until this instant
         # The SDK's own retries are off: retrying here keeps one policy and testable timing.
         self._client = client or OpenAI(
             api_key=api_key,
@@ -99,7 +105,7 @@ class OpenRouterClient(LLMClient):
         max_tokens: int | None = None,
     ) -> LLMResponse:
         failures: list[str] = []
-        for model in self.models:
+        for model in self._candidates():
             try:
                 return self._complete_with_retry(model, messages, tools, temperature, max_tokens)
             except openai.AuthenticationError as exc:
@@ -108,8 +114,31 @@ class OpenRouterClient(LLMClient):
                 raise LLMConfigError(f"OpenRouter denied access: {exc}") from exc
             except Exception as exc:  # next model: 400/404 here usually means "no tool support"
                 failures.append(f"{model}: {self._describe(exc)}")
-                logger.warning("Model %s failed (%s), trying next", model, self._describe(exc))
+                self._penalize(model, exc)
         raise LLMUnavailableError(failures)
+
+    def _candidates(self) -> list[str]:
+        """Models worth trying now. Never empty: if everything is penalized, try them all again."""
+        now = self._monotonic()
+        usable = [m for m in self.models if m not in self._dead]
+        ready = [m for m in usable if self._resting.get(m, 0.0) <= now]
+        return ready or usable or list(self.models)
+
+    def _penalize(self, model: str, exc: Exception) -> None:
+        """Remember a failure, so the next calls do not pay for the same dead end again."""
+        status = _status(exc)
+        if status in (400, 404, 422):
+            fresh = model not in self._dead
+            self._dead.add(model)
+            note = "skipping it for the rest of the session"
+        elif _is_transient(exc):
+            fresh = self._resting.get(model, 0.0) <= self._monotonic()
+            self._resting[model] = self._monotonic() + self._cooldown
+            note = f"resting it for {self._cooldown:.0f}s"
+        else:  # e.g. an empty answer worth one more try on the next call
+            fresh, note = True, "trying the next model"
+        level = logging.WARNING if fresh else logging.INFO
+        logger.log(level, "Model %s failed (%s), %s", model, self._describe(exc), note)
 
     def _complete_with_retry(
         self,
